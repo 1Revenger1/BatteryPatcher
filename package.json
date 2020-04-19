@@ -1,12 +1,15 @@
 {
-  "name": "battery",
+  "name": "battery-patcher",
   "version": "1.0.0",
   "description": "Battery Patcher for SMCBatteryManager",
   "main": "./out/Index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsc && cp ./SSDTTemplate.dsl ./out/SSDTTemplate.dsl",
+    "run": "node ./out/Index.js"
   },
-  "author": "",
+  "repository": "https://github.com/1Revenger1/BatteryPatcher",
+  "author": "1Revenger1",
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^13.13.0"

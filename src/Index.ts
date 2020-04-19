@@ -17,9 +17,9 @@ class iASL {
         try {
             accessSync("./Executables/iasl.exe", constants.R_OK);
         } catch (err) {
-            console.log(err);
+            // console.log(err);
             console.log("Need iASL");
-            process.exit(1);
+            // process.exit(1);
         }
     }
 
@@ -49,9 +49,9 @@ class acpiDump {
         try {
             accessSync("./Executables/acpidump.exe", constants.R_OK);
         } catch (err) {
-            console.log(err);
+            // console.log(err);
             console.log("Need acpidump");
-            process.exit(1);
+            // process.exit(1);
         }
     }
 
@@ -127,6 +127,18 @@ class BatteryPatcher {
             let ECFields : OperatingRegion[] = [];
             let OperatingRegionName = "";
             
+            // Strip Comments
+            dsdt = dsdt.map(line => {
+                if(line.includes("//")) {
+                    line = line.substring(0, line.indexOf("//"));
+                }
+                
+                if(line.includes("/*")) {
+                    line = line.substring(0, line.indexOf("/*")) + line.substring(line.indexOf("*/"));
+                }
+                return line;
+            });
+
             // Loop once for EC device and for finding OperationRegions/fields
             dsdt.forEach((line, lineNumber) => {
                 // Find LPC/LPCB Scope
@@ -227,22 +239,93 @@ class BatteryPatcher {
                 console.log(filteredRG);
             });
 
+            let methodStack : string[] = [];
+            let scopeStack : string[] = [];
+            let inMethod = false;
+            let inScope = false;
+            let found = 0;
+
+            let methodString = "";
+
             // Loop again for methods
-            dsdt.forEach(line => {
-                // Find LPC/LPCB Scope
-                if(line.match(/.*Scope \(.*(LPC|LPCB)/g)) {
+            dsdt.forEach((line, lineNum) => {
+                if (inScope) {
+                    if (line.includes("{")) scopeStack.push("{");
+                    if (line.includes("}")) {
+                        scopeStack.pop();
+                        if(scopeStack.length == 0) inScope = false;
+                    }
+                }
+                
+                // Find scope
+                if(line.match(/.*Scope \(.*(LPC|LPCB)\)/g) && !inScope) {
+                    inScope = true;
                     scope = line.substring(line.indexOf("(") + 1, line.indexOf(")"));
                 }
-                // If in the scope of EC, we have to check every line for references to field objs in EC fields
-                if (scope.match(/.*(H_EC|ECDV|PGEC|EC0|EC)\)/g)) {
 
-                // Outside of scope for EC, we can just check for references to EC
-                } else if (line.match(/.*(H_EC|ECDV|PGEC|EC0|EC)/g)) {
-
+                // Find EC Device (Probably don't need this though)
+                if(line.match(/.*Device \((H_EC|ECDV|EC0|EC|PGEC)/g)) {
+                    let name = line.substring(line.indexOf("(") + 1, line.indexOf(")"));
+                    scope += "." + name;
                 }
 
+                if (line.match(/.*Method \(/g)) {
+                    inMethod = true;
+                    return;
+                }
+
+                if (!inMethod) return;
+
+                if (line.includes("{")) {
+                    methodStack.push("{");
+                }
+                if (line.includes("}")) {
+                    methodStack.pop();
+                    if (methodStack.length == 0) { 
+                        inMethod = false;
+                        return;
+                    }
+                }
+
+                // If in the scope of EC, we have to check every line for references to field objs in EC fields
+                if (scope.match(/(H_EC|ECDV|PGEC|EC0|EC)/g)) {
+                    let splitLine : string[] = line.trim().replace(",", "").replace("(", "").replace(")", "").replace(")", "").split(/( |\.)/).filter(string => {
+                        return string.trim().length && string.trim().length < 5 && string.match(/[^a-z]+[A-Z]+/g)
+                    });
+                    if (splitLine.length == 0) return;
+                    
+                    splitLine.forEach(result => {
+                        // console.log(result); 
+                        filteredECs.forEach(or => or.fields.forEach((field) => {
+                            if (field.fieldsobs.some(fieldObj => fieldObj.name == result)) {
+                                console.log(`${lineNum+1}, ${result}`);
+                                found++;
+                            }
+                        }));
+                    });
+                    
+                // Outside of scope for EC, we can just check for references to EC
+                } else {
+                    let result = line.match(/(H_EC|ECDV|PGEC|EC0|EC)\.([^\.\(]{1,5}((?=(\r|\n))| [^\.\(]))/g); 
+                    if(result==null) return;
+                    
+                    result.forEach(string => {
+                        let trimmedStr = string.replace(")", "").replace("=", "").replace("&", "").trim().split(".")[1];
+                        
+                        filteredECs.forEach(or => or.fields.forEach((field) => {
+                            if (field.fieldsobs.some(fieldObj => fieldObj.name == trimmedStr)) {
+                                console.log(`${lineNum+1}, ${trimmedStr}`);
+                                found++;
+                            }
+                        }));
+                    });
+                }
+
+                // Save away edited line
+                methodString += line + "\n";
             });
 
+            console.log(found);
             console.log(ECFields);
 
         } catch (err) {
@@ -293,6 +376,12 @@ interface Field {
 interface FieldObj {
     name: string,
     size: number,
+}
+
+interface Method {
+    name: string,
+    header: string,
+    lines: string[]
 }
 
 const patcher = new BatteryPatcher();
