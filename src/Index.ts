@@ -1,5 +1,6 @@
 import { accessSync, constants, readFileSync } from "fs";
 import { spawnSync, execSync } from "child_process";
+import { DSDT, OperatingRegion, Field, FieldUnit, OpRegTypes } from "./DSDT";
 
 process.chdir(__dirname);
 
@@ -118,107 +119,14 @@ class BatteryPatcher {
         header();
 
         try {
-            let dsdt = readFileSync("./Results/dsdt.dsl", { encoding: "UTF8" }).split("\n");
-            
-            let scope = "";
-            let ecName = "";
-            let ECdevices : EC[] = [];
-            let discoveringFields = false;
-            let ECFields : OperatingRegion[] = [];
-            let OperatingRegionName = "";
-            
-            // Strip Comments
-            dsdt = dsdt.map(line => {
-                if(line.includes("//")) {
-                    line = line.substring(0, line.indexOf("//"));
-                }
-                
-                if(line.includes("/*")) {
-                    line = line.substring(0, line.indexOf("/*")) + line.substring(line.indexOf("*/"));
-                }
-                return line;
-            });
-
-            // Loop once for EC device and for finding OperationRegions/fields
-            dsdt.forEach((line, lineNumber) => {
-                // Find LPC/LPCB Scope
-                if(line.match(/.*Scope \(.*(LPC|LPCB)/g)) {
-                    scope = line.substring(line.indexOf("(") + 1, line.indexOf(")"));
-                }
-
-                // Find EC Device (Probably don't need this though)
-                if(line.match(/.*Device \((H_EC|ECDV|EC0|EC|PGEC)/g)) {
-                    let name = line.substring(line.indexOf("(") + 1, line.indexOf(")"));
-                    ecName = name;
-                }
-
-                if(line.match(/.*OperationRegion.*EmbeddedControl/g)) {
-                    console.log("Discovered new OperationRegion");
-                    let name = line.substring(line.indexOf("(") + 1, line.indexOf(","));
-                    ECFields.push({
-                        name: name,
-                        ec: { scope: scope, name: ecName },
-                        header: line.trim().replace(name, "[[REGION-NAME]]"),
-                        fields: []
-                    });
-                }
-
-                if(line.match(/.*Field*/)) {
-                    // Check if it's for any Operating regions we've found
-                    ECFields.forEach((reg, i) => {
-                        let name = line.substring(line.indexOf("(") + 1, line.indexOf(","))
-                        if (name == reg.name) {
-                            console.log(`Found Field: ${name}`);
-                            reg.fields.push({
-                                header: line.trim().replace(name, "[[REGION-NAME]]"),
-                                fieldsobs: []
-                            });
-
-                            // Continue iterating until we reach the end of the field block
-                            // and put them under a new Field in this Operating Region
-                            discoveringFields = true;
-                            OperatingRegionName = name;
-                        }
-                    });
-                }
-
-                if(discoveringFields) {
-                    if(line.includes("}")) discoveringFields = false;
-                    else if(line.match(/.*(Field|\{)/g)) { /* do nothing */ }
-                    else {
-                        // Check that we're adding to the right Operating Region
-                        ECFields.forEach(reg => {
-                            if(OperatingRegionName == reg.name) {
-                                // Field we are pushing into will always be the last one
-                                // Fields and FieldObjs are pushed into in the order they are found in the DSDT
-                                let field: FieldObj;
-                                if (line.includes("Offset")) {
-                                    field = {
-                                        name: "Offset",
-                                        size: parseInt(line.substring(line.indexOf("x") + 1, line.indexOf(")")), 16)
-                                    };
-                                } else { 
-                                    let lineSplit = line.trim().split(",");
-                                    field = {
-                                        name: lineSplit[0],
-                                        size: parseInt(lineSplit[1])
-                                    };
-                                }
-
-                                reg.fields[reg.fields.length - 1].fieldsobs.push(field);
-
-                                console.log(`Found Field (${field.name}, ${field.size.toString(16)})`)
-                            }
-                        });
-                    }
-                }
-            });
+            let dsdtString = readFileSync("./Results/dsdt.dsl", { encoding: "UTF8" });
+            let dsdt = new DSDT(dsdtString);
 
             let filteredECs : OperatingRegion[] = [];
 
             // Filter for fields above 8 bits
-            ECFields.forEach(rg => {
-
+            dsdt.operatingRegions.forEach(rg => {
+                if (rg.type != OpRegTypes.EmbeddedControl) return;
                 let filteredRG = {
                     ...rg
                 }
@@ -227,11 +135,12 @@ class BatteryPatcher {
 
                 rg.fields.forEach(field => {
                     let filteredField = {
-                        header: field.header,
-                        fieldsobs: field.fieldsobs.filter(fieldObj => {
+                        name: field.name,
+                        fieldUnits: field.fieldUnits.filter(fieldObj => {
                             return fieldObj.name != "Offset" && fieldObj.size > 8
                         })
                     }
+                    console.log(filteredField.fieldUnits);
                     filteredRG.fields.push(filteredField);
                 });
 
@@ -239,56 +148,16 @@ class BatteryPatcher {
                 console.log(filteredRG);
             });
 
-            let methodStack : string[] = [];
-            let scopeStack : string[] = [];
-            let inMethod = false;
-            let inScope = false;
             let found = 0;
 
             let methodString = "";
 
             // Loop again for methods
-            dsdt.forEach((line, lineNum) => {
-                if (inScope) {
-                    if (line.includes("{")) scopeStack.push("{");
-                    if (line.includes("}")) {
-                        scopeStack.pop();
-                        if(scopeStack.length == 0) inScope = false;
-                    }
-                }
+            dsdt.methods.forEach(method => method.lines.forEach((line, lineNum) => {
                 
-                // Find scope
-                if(line.match(/.*Scope \(.*(LPC|LPCB)\)/g) && !inScope) {
-                    inScope = true;
-                    scope = line.substring(line.indexOf("(") + 1, line.indexOf(")"));
-                }
-
-                // Find EC Device (Probably don't need this though)
-                if(line.match(/.*Device \((H_EC|ECDV|EC0|EC|PGEC)/g)) {
-                    let name = line.substring(line.indexOf("(") + 1, line.indexOf(")"));
-                    scope += "." + name;
-                }
-
-                if (line.match(/.*Method \(/g)) {
-                    inMethod = true;
-                    return;
-                }
-
-                if (!inMethod) return;
-
-                if (line.includes("{")) {
-                    methodStack.push("{");
-                }
-                if (line.includes("}")) {
-                    methodStack.pop();
-                    if (methodStack.length == 0) { 
-                        inMethod = false;
-                        return;
-                    }
-                }
-
                 // If in the scope of EC, we have to check every line for references to field objs in EC fields
-                if (scope.match(/(H_EC|ECDV|PGEC|EC0|EC)/g)) {
+                if (method.scope
+                    && method.scope.match(/(H_EC|ECDV|PGEC|EC0|EC)/g)) {
                     let splitLine : string[] = line.trim().replace(",", "").replace("(", "").replace(")", "").replace(")", "").split(/( |\.)/).filter(string => {
                         return string.trim().length && string.trim().length < 5 && string.match(/[^a-z]+[A-Z]+/g)
                     });
@@ -297,7 +166,7 @@ class BatteryPatcher {
                     splitLine.forEach(result => {
                         // console.log(result); 
                         filteredECs.forEach(or => or.fields.forEach((field) => {
-                            if (field.fieldsobs.some(fieldObj => fieldObj.name == result)) {
+                            if (field.fieldUnits.some(fieldObj => fieldObj.name == result)) {
                                 console.log(`${lineNum+1}, ${result}`);
                                 found++;
                             }
@@ -306,14 +175,14 @@ class BatteryPatcher {
                     
                 // Outside of scope for EC, we can just check for references to EC
                 } else {
-                    let result = line.match(/(H_EC|ECDV|PGEC|EC0|EC)\.([^\.\(]{1,5}((?=(\r|\n))| [^\.\(]))/g); 
+                    let result = line.match(/(H_EC|ECDV|PGEC|EC0|EC)\.([^\.\(]{1,5}((?=(\r|\n))| [^\.\(]))/g);
                     if(result==null) return;
                     
                     result.forEach(string => {
                         let trimmedStr = string.replace(")", "").replace("=", "").replace("&", "").trim().split(".")[1];
                         
                         filteredECs.forEach(or => or.fields.forEach((field) => {
-                            if (field.fieldsobs.some(fieldObj => fieldObj.name == trimmedStr)) {
+                            if (field.fieldUnits.some(fieldObj => fieldObj.name == trimmedStr)) {
                                 console.log(`${lineNum+1}, ${trimmedStr}`);
                                 found++;
                             }
@@ -323,10 +192,10 @@ class BatteryPatcher {
 
                 // Save away edited line
                 methodString += line + "\n";
-            });
+            }));
 
             console.log(found);
-            console.log(ECFields);
+            // console.log(ECFields);
 
         } catch (err) {
             console.log(err);
@@ -354,34 +223,6 @@ class BatteryPatcher {
             if(res.toLowerCase().startsWith("2")) await this.crawler();
         }
     }
-}
-
-interface EC {
-    name: string,
-    scope: string
-}
-
-interface OperatingRegion {
-    name: string,
-    ec: EC,
-    header : string,
-    fields : Field[]
-}
-
-interface Field {
-    header: string,
-    fieldsobs : FieldObj[];
-}
-
-interface FieldObj {
-    name: string,
-    size: number,
-}
-
-interface Method {
-    name: string,
-    header: string,
-    lines: string[]
 }
 
 const patcher = new BatteryPatcher();
