@@ -1,4 +1,4 @@
-import { Method, OperatingRegion, DSDT, FieldUnit } from "./DSDT";
+import { Method, OperatingRegion, DSDT, FieldUnit, ObjType } from "./DSDT";
 import { writeFileSync } from "fs";
 
 const HEADER = `DefinitionBlock("", "SSDT", 2, "GWYD", "BATT", 0) {`
@@ -69,6 +69,7 @@ export class SSDT {
 
         let EC_Prints : string[] = [];
         let MethodPrints : string[] = [];
+        let ExternalPrints : string[] = [];
         // All modified field units across all EC regions/fields
         let modifiedEntryList = new Map<string, FieldUnit[]>();
         let over32bits = new Map<string, number>();
@@ -76,6 +77,7 @@ export class SSDT {
         // Calculate modifications and new fields
         // Print out resulting new fields
         filteredEC.forEach((ec, ecIndex) => {
+            ExternalPrints.push(`\tExternal (${ec.scope}, DeviceObj)`);
             EC_Prints.push(`\tScope (${ec.scope})\n\t{`);
             EC_Prints.push(`\t\tOperationRegion (X${ec.name.substring(1)}, EmbeddedControl, 0x00, 0x0100)`);
 
@@ -174,9 +176,80 @@ export class SSDT {
             }
 
             MethodPrints.push(`${this.tab(depth)}${method.header}`);
+            
+            let definedNames :string[] = [];
             method.lines.forEach(line => {
+                let res;
+                let extStr = "";
+
+                if (line.includes("Name")) {
+                    res = line.match(/(?<!0x)[0-9A-Z_]{2,4}($|(?=\))|(?![^ ]*(\.|\"))( \()?)/g);
+                    definedNames.push(res![0]);
+                }
+
+                // Detect Externals...
+                if (res = line.match(/(?<=Acquire \()[0-9a-zA-Z_]{1,4}/g)) {
+                    let mut = dsdt.variable.get(res[0]);
+                    if (mut!.type != ObjType.MutexObj) console.log("Incorrect Type - Mutex!");
+                    extStr = (`\tExternal (${mut!.scope + "." + mut!.name}, MutexObj)`);
+                    if (!definedNames.includes(mut!.name)
+                     && !ExternalPrints.includes(extStr)) ExternalPrints.push(extStr);
+                }
+
+                if (res = line.match(/(?<!0x)[0-9A-Z_]{2,4}($|(?=\))|(?![^ ]*(\.|\"))( \()?)/g)) {
+                    res.forEach(result => {
+                        if (definedNames.includes(result)) return;
+                        // Don't add modified FieldUnits to externals...
+                        // Otherwise we defeat the entire point of this program
+                        if (modifiedEntryList.has(result)) return;
+                        // Dito for methods in the SSDT
+                        if (toModify.filter(meth => meth.name == result).length) return;
+
+                        if (result.includes(" (")) {
+                            let method = dsdt.methods.get(result.split(" ")[0]);
+                            if (method!.scope == undefined)
+                                extStr = (`\tExternal (\\${method!.name}, MethodObj)`);
+                            else extStr = (`\tExternal (${method!.scope + "." + method!.name}, MethodObj)`);
+                        } else {
+                            // Check Field Units first
+                            // Then check Thermal Zones
+                            // Then check Variables
+                            // Then check devices
+                            // Otherwise Unknown Obj
+
+                            let orResult: FieldUnit | undefined;
+                            let orScope: string | undefined;
+
+                            dsdt.operatingRegions.forEach(or => {
+                                or.fields.forEach(field => field.fieldUnits.forEach(fieldUnit => {
+                                    if (fieldUnit.name == result) {
+                                        orResult = fieldUnit;
+                                        orScope = or.scope ? or.scope : "\\";
+                                    }
+                                }));
+                            });
+
+                            if (orResult && orScope)
+                                extStr = (`\tExternal (${orScope + (orScope != "\\" ? "." : "") + orResult.name}, FieldUnitObj)`);
+                            else if (dsdt.variable.has(result)) {
+                                let variab = dsdt.variable.get(result);
+                                extStr = (`\tExternal (${(variab!.scope ? variab!.scope + ".": "\\") + variab!.name}, ${
+                                    ObjType[variab!.type].toString()})`);
+                            } else if (line.includes("Notify")) {
+                                if (result == "_SB")
+                                    extStr = (`\tExternal (\\_SB, DeviceObj)`);
+                            } else if (!result.match(/^[A-F0-9]+$/g)) {
+                                console.log("Unknown " + result);
+                            }
+                        }
+
+                        if (extStr != "" && !ExternalPrints.includes(extStr)) ExternalPrints.push(extStr);
+                    });
+                }
+
+
                 // Detect if there are any vars to replace
-                let res = line.match(/\[\[.*\]\]/g);
+                res = line.match(/\[\[.*\]\]/g);
                 
                 // Replace them with methods then write to `line`
                 // Sizes over 32 bits have helper methods which 
@@ -212,7 +285,6 @@ export class SSDT {
                         // else inside scope - can just use field unit name
                         } else {
                             replace = modifiedEntryList.get(match);
-                            if (match == "SBDN") console.log(replace);
                             switch (replace!.length) {
                                 // Greater than 32bits
                                 case 1:
@@ -241,12 +313,20 @@ export class SSDT {
             MethodPrints.push(`${this.tab(--depth)}}\n`)
         });
 
-        // Calculate Externals
-        // TODO:
+        // Sort Externals to similar type
+        ExternalPrints = ExternalPrints.sort((a, b) => {
+            let aTrim = a.replace(/(External|[ \(\)])/g, "").split(",");
+            let bTrim = b.replace(/(External|[ \(\)])/g, "").split(",");
+
+            if(a.length < 2 || b.length < 2) return -1;
+            if (aTrim[1] == bTrim[1]) return aTrim[0].localeCompare(bTrim[0]);
+            else return aTrim[1].localeCompare(bTrim[1]);
+        });
 
         //Print SSDT
         this.lines.push(HEADER);
-        // Print Externals
+
+        this.lines.push(ExternalPrints.join("\n"));
 
         this.lines.push(REHABMETHODS);
 

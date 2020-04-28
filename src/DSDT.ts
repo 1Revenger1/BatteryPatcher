@@ -175,7 +175,13 @@ export class DSDT {
 
             if (res = line.match(/(?<=Device \()[0-9a-zA-Z_]{1,4}/g)) {
                 let name = scopeContext[scopeContext.length - 1] + "." + res[0];
-
+                let variab : Variable = {
+                    name: res[0],
+                    scope: scopeContext[scopeContext.length - 1],
+                    type: ObjType.DeviceObj
+                }
+                console.log(variab);
+                this.variable.set(variab.name, variab);
                 scopeContext.push(name);
                 scopeStack.push(depth);
                 depth = 0;
@@ -211,8 +217,8 @@ export class DSDT {
             // Possibly expand later?
             if ((res = line.match(/(?<= Field \()[0-9a-zA-Z_]{1,4}/g))
                 && this.operatingRegions.has(res[0].trim())
-                && this.operatingRegions.get(res[0].trim())!.type == OpRegTypes.EmbeddedControl) {
-                
+                /*&& this.operatingRegions.get(res[0].trim())!.type == OpRegTypes.EmbeddedControl*/) {
+                    
                 // Yes, if we made it here it really exists...
                 let or = this.operatingRegions.get(res[0].trim())!;
                 let newField = {
@@ -245,9 +251,19 @@ export class DSDT {
                 if (line.includes("Buffer")) variab.type = ObjType.BuffObj;
                 if (line.includes("Package")) variab.type = ObjType.PkgObj;
                 if (line.toLowerCase().includes("eisaid")) {} // Int
-                else if (line.includes("")) variab.type = ObjType.StrObj;
+                else if (line.includes("\"")) variab.type = ObjType.StrObj;
                 if (line.includes("ResourceTemplate")) variab.type = ObjType.BuffObj;
 
+                this.variable.set(variab.name, variab);
+            }
+
+            if (res = line.match(/(?<=External \()/g)) {
+                let trimmedArr : string[] = line.trim().replace(/(External|\(|\)| )/g, "").split(/[\.,]/g);
+                let variab : Variable = {
+                    name: trimmedArr[trimmedArr.length - 2],
+                    type: ObjType[trimmedArr[trimmedArr.length - 1] as keyof typeof ObjType],
+                    scope: "\\" + trimmedArr.slice(0, trimmedArr.length - 2).join(".")
+                }
                 this.variable.set(variab.name, variab);
             }
             
