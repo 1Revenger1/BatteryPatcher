@@ -72,12 +72,13 @@ export interface Method {
 
 export interface FieldUnit {
     name: string,
-    size: number
+    size: number,
+    offset?: number
 }
 
 export interface Field {
     name: string,
-    fieldUnits: FieldUnit[]
+    fieldUnits: Map<string, FieldUnit>
 }
 
 export interface OperatingRegion {
@@ -107,6 +108,8 @@ export class DSDT {
 
         let method : Method | null;
         let field : Field | null;
+
+        let offsetIndex = 0;
 
         lines.forEach(line => {
             let res : string[] | null;
@@ -142,18 +145,19 @@ export class DSDT {
                 let fieldUnit;
                 if (line.includes("Offset")) {
                     fieldUnit = {
-                        name: "Offset",
+                        name: "Offset" + offsetIndex++,
                         size: parseInt(line.substring(line.indexOf("x") + 1, line.indexOf(")")), 16)
                     };
                 } else { 
                     let lineSplit = line.trim().split(",");
+                    if (lineSplit[0] == "") lineSplit[0] = "" + offsetIndex++;
                     fieldUnit = {
                         name: lineSplit[0],
                         size: parseInt(lineSplit[1])
                     };
                 }
 
-                field.fieldUnits.push(fieldUnit);
+                field.fieldUnits.set(fieldUnit.name, fieldUnit);
                 return;
             }
 
@@ -169,12 +173,20 @@ export class DSDT {
                 depth = 0;
             }
 
+            if (res = line.match(/(?<=Device \()[0-9a-zA-Z_]{1,4}/g)) {
+                let name = scopeContext[scopeContext.length - 1] + "." + res[0];
+
+                scopeContext.push(name);
+                scopeStack.push(depth);
+                depth = 0;
+            }
+
             if (res = line.match(/(?<=Method \()[0-9a-zA-Z_]{1,4}/g)) {
                 method = {
                     name: res[0],
                     lines : new Array(),
                     scope: scopeContext[scopeContext.length - 1],
-                    header: line.trim().replace(res[0], "[[NAME]]")
+                    header: line.trim()
                 }
 
                 scopeContext.push(scopeContext[scopeContext.length - 1] + "." + method.name);
@@ -205,7 +217,7 @@ export class DSDT {
                 let or = this.operatingRegions.get(res[0].trim())!;
                 let newField = {
                     name: res[0].trim(),
-                    fieldUnits: []
+                    fieldUnits: new Map<string, FieldUnit>()
                 }
 
                 or.fields.push(newField);
@@ -272,7 +284,7 @@ export class DSDT {
             }
             
             if(line.includes("/*")) {
-                line = line.substring(0, line.indexOf("/*")) + line.substring(line.indexOf("*/"));
+                line = line.substring(0, line.indexOf("/*")) + line.substring(line.indexOf("*/") + 2);
             }
             return line;
         });

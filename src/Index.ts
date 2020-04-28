@@ -1,10 +1,11 @@
 import { accessSync, constants, readFileSync } from "fs";
 import { spawnSync, execSync } from "child_process";
-import { DSDT, OperatingRegion, Field, FieldUnit, OpRegTypes } from "./DSDT";
+import { DSDT, OperatingRegion, Field, FieldUnit, OpRegTypes, Method } from "./DSDT";
+import { SSDT } from "./SSDT";
 
 process.chdir(__dirname);
 
-console.clear();
+// console.clear();
 
 function header() {
     console.log(`+${new Array(27).fill("-").join("")}+`);
@@ -136,10 +137,14 @@ class BatteryPatcher {
                 rg.fields.forEach(field => {
                     let filteredField = {
                         name: field.name,
-                        fieldUnits: field.fieldUnits.filter(fieldObj => {
-                            return fieldObj.name != "Offset" && fieldObj.size > 8
-                        })
+                        fieldUnits: new Map<string, FieldUnit>()
                     }
+
+                    field.fieldUnits.forEach(fieldObj => {
+                        if (!fieldObj.name.includes("Offset") && fieldObj.size > 8)
+                            filteredField.fieldUnits.set(fieldObj.name, fieldObj)
+                    });
+
                     console.log(filteredField.fieldUnits);
                     filteredRG.fields.push(filteredField);
                 });
@@ -150,60 +155,113 @@ class BatteryPatcher {
 
             let found = 0;
 
-            let methodString = "";
+            let editedMethods : Method[] = [];
 
             // Loop again for methods
-            dsdt.methods.forEach(method => method.lines.forEach((line, lineNum) => {
-                
-                // If in the scope of EC, we have to check every line for references to field objs in EC fields
-                if (method.scope
-                    && method.scope.match(/(H_EC|ECDV|PGEC|EC0|EC)/g)) {
-                    let splitLine : string[] = line.trim().replace(",", "").replace("(", "").replace(")", "").replace(")", "").split(/( |\.)/).filter(string => {
-                        return string.trim().length && string.trim().length < 5 && string.match(/[^a-z]+[A-Z]+/g)
-                    });
-                    if (splitLine.length == 0) return;
-                    
-                    splitLine.forEach(result => {
-                        // console.log(result); 
-                        filteredECs.forEach(or => or.fields.forEach((field) => {
-                            if (field.fieldUnits.some(fieldObj => fieldObj.name == result)) {
-                                console.log(`${lineNum+1}, ${result}`);
-                                found++;
-                            }
-                        }));
-                    });
-                    
-                // Outside of scope for EC, we can just check for references to EC
-                } else {
-                    let result = line.match(/(H_EC|ECDV|PGEC|EC0|EC)\.([^\.\(]{1,5}((?=(\r|\n))| [^\.\(]))/g);
-                    if(result==null) return;
-                    
-                    result.forEach(string => {
-                        let trimmedStr = string.replace(")", "").replace("=", "").replace("&", "").trim().split(".")[1];
-                        
-                        filteredECs.forEach(or => or.fields.forEach((field) => {
-                            if (field.fieldUnits.some(fieldObj => fieldObj.name == trimmedStr)) {
-                                console.log(`${lineNum+1}, ${trimmedStr}`);
-                                found++;
-                            }
-                        }));
-                    });
+            dsdt.methods.forEach(method => { 
+                let needsPatch = false;
+                let editedMethod = {
+                    ...method
                 }
 
-                // Save away edited line
-                methodString += line + "\n";
-            }));
+                editedMethod.lines = method.lines.slice(0);
 
-            console.log(found);
-            // console.log(ECFields);
+                method.lines.forEach((line, lineNum) => {
+                    
+                    let scopeResults = undefined;
+                    if (method.scope)
+                        scopeResults = (method.scope + "." + method.name).match(/(H_EC|ECDV|PGEC|EC0|EC)/g);
+                    let result;
+
+                    // if (method.name == "GBIX") console.log(method.scope);
+                    // If in the scope of EC, we have to check every line for references to field objs in EC fields
+                    if (scopeResults && (result = this.matchEC(line, filteredECs))) {
+                        line = line.replace(`${result}`, `[[${result}]]`);
+                        console.log(`${method.name}, ${result}`);
+                        needsPatch = true; 
+                    // Outside of scope for EC, we can just check for references to EC
+                    } else if (result = this.matchOutsideEC(line, filteredECs, lineNum)) {
+                        result.forEach(str => {
+                            line = line.replace(str, `[[${str}]]`)
+                        });
+                        needsPatch = true;
+                    }
+
+                    // Save away edited line
+                    editedMethod.lines[lineNum] = line.trim();
+                });
+
+                if (needsPatch) editedMethods.push(editedMethod);
+            });
+
+            // Yeet we've got it all
+            // Time to patch
+
+            const ssdt = new SSDT(filteredECs, editedMethods, dsdt);
 
         } catch (err) {
             console.log(err);
             console.log(`Not able to find decompiled DSDT at ${__dirname}/Results/dsdt.dsl!`);
             process.exit();
         }
-        await new Promise(res => setTimeout(() => res(), 1000));
 
+
+        await prompt("Press enter to continue...");
+
+    }
+
+    matchEC (line : string, filteredECs : OperatingRegion[]) : string | null {
+        let splitLine : string[] = line
+            .replace(/[,\(\)]/g, "")
+            .trim()
+            .split(/( |\.)/)
+            .filter(string => 
+                string.trim().length && string.trim().length < 5 && string.match(/[^a-z]+[A-Z]+/g)
+            );
+
+        if (splitLine.length == 0)
+            return null;
+
+        for(let result of splitLine) {
+            if(this.checkFieldUnitExists(filteredECs, result)) {
+                return result;
+            };
+        }
+
+        return null;
+    }
+
+    matchOutsideEC(line : string, filteredECs : OperatingRegion[], lineNum : number) : string[] | null {
+        let result = line.match(/(\\)?([0-9a-zA-Z_]{1,4}\.)+(H_EC|ECDV|PGEC|EC0|EC\.)([0-9a-zA-Z_]{1,4}($|(?= [^\.\(])))/g); 
+        
+        if(result==null)
+            return null;
+
+        let res = [];
+
+        for(let string of result) {
+            let array = string.replace(")", "").replace("=", "").replace("&", "").trim().split(".");
+            let trimmedStr = array[array.length - 1];
+            
+            if (this.checkFieldUnitExists(filteredECs, trimmedStr)) {
+                res.push(string);
+            }
+        }
+
+        if (res.length) return res;
+        else return null;
+    }
+
+    checkFieldUnitExists (orList: OperatingRegion[], check: string) : boolean {
+        for (let or of orList) {
+            for (let field of or.fields) {
+                if (field.fieldUnits.has(check)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     async main() {
@@ -227,4 +285,3 @@ class BatteryPatcher {
 
 const patcher = new BatteryPatcher();
 patcher.main();
-
