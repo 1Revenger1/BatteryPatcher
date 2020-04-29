@@ -1,4 +1,4 @@
-import { accessSync, constants, readFileSync, writeFileSync } from "fs";
+import { accessSync, constants, readFileSync, writeFileSync, fstat, existsSync } from "fs";
 import { spawnSync, execSync } from "child_process";
 import { DSDT, OperatingRegion, Field, FieldUnit, OpRegTypes, Method } from "./DSDT";
 import { SSDT } from "./SSDT";
@@ -11,20 +11,38 @@ process.chdir(__dirname);
 // console.clear();
 
 function header() {
-    console.log(`+${new Array(27).fill("-").join("")}+`);
-    console.log("|      Battery Patcher      |");
-    console.log(`+${new Array(27).fill("-").join("")}+`);
+    console.log(chalk.green(`+${new Array(27).fill("-").join("")}+`));
+    console.log(chalk.green("|") + chalk.cyan("       9-bit Patcher       ") + chalk.green("|"));
+    console.log(chalk.green(`+${new Array(27).fill("-").join("")}+`));
     console.log(); //new line
 }
 
 class iASL {
+    executable: string;
     constructor() {
+        this.executable = "./Executables/iasl";
+
         try {
-            accessSync("./Executables/iasl.exe", constants.R_OK);
+            if (process.platform == "win32") {
+                let res = execSync("which iasl");
+                // TODO figure this out
+            } else {
+                let res = execSync("type iasl");
+                if (res.toString().includes("is")) {
+                    console.log("Found iASL in path");
+                    this.executable = "iasl";
+                }
+            }
+
+            if (this.executable.includes("\.")) {
+                console.log(this.executable);
+                accessSync(this.executable, constants.R_OK);
+                console.log("Found under Executables");  
+            }
         } catch (err) {
-            // console.log(err);
-            console.log("Need iASL");
-            // process.exit(1);
+            console.log(err);
+            console.log(chalk.red("Add iasl to the Executables folder OR add it to your PATH"));
+            process.exit(1);
         }
     }
 
@@ -50,14 +68,42 @@ class iASL {
 }
 
 class acpiDump {
+    executable: string;
+    noDump: boolean;
+
     constructor() {
+        this.executable = "./Executables/acpidump";
+        this.noDump = true;
         try {
-            accessSync("./Executables/acpidump.exe", constants.R_OK);
+            // No acpidump for macOS
+            if (process.platform == "darwin") return;
+            if (process.platform == "win32") {
+                let res = execSync("which acpidump");
+                // TODO figure this out
+            } else {
+                let res = execSync("type acpidump");
+                if (res.toString().includes("is")) {
+                    console.log("Found acpidump in path");
+                    this.executable == "acpidump";
+                    this.noDump = false;
+                }
+            }
+
+
+            if (this.executable.includes(".")) {
+                accessSync(this.executable, constants.R_OK);
+                console.log("Found under Executables");
+                this.noDump = false;  
+            }
         } catch (err) {
-            // console.log(err);
-            console.log("Need acpidump");
+            console.log(err);
+            // console.log(chalk.red("Add acpidump to the Executables folder OR add it to your PATH"));
             // process.exit(1);
         }
+    }
+
+    hasAcpiDump() : boolean {
+        return !this.noDump;
     }
 
     dumpDsdt () : boolean {
@@ -78,7 +124,6 @@ class acpiDump {
         }
         return prc.status == 0;
     }
-
 }
 
 async function prompt (question : string) : Promise<string> {
@@ -100,9 +145,37 @@ class BatteryPatcher {
     dumper = new acpiDump();
     iasl = new iASL();
 
+    dsdtPath = "./Results/DSDT.dsl";
+
     constructor() {
         // idk do constructy things
         // Maybe check and download for iASL?
+    }
+
+    findDSDT (loc?: string) : Boolean {
+        // if (loc) console.log(loc);
+        return existsSync(loc ? loc : this.dsdtPath);
+    }
+
+    async changeDSDTLoc() {
+        while (true) {
+            console.clear();
+            header();
+            
+            console.log("Enter in the location of your DSDT.aml\n");
+            console.log(chalk.cyan("Windows Tip: ") + " Shift + Right click your DSDT.aml and click \"Copy Path\"");
+            console.log(chalk.cyan("Linooox/macOS: ") + " Drag and drop your DSDT.aml into this prompt\n");
+
+            let res = await prompt("New DSDT Location (q to go to the menu)");
+            res = res.replace(/[\n\r]/g, "");
+            if (res == "q") return;
+            // console.log(res);
+            if (this.findDSDT(res)) return this.dsdtPath = res;
+            else {
+                console.log(chalk.red("Could not find DSDT at ") + chalk.yellow(res) + chalk.red("!"));
+                await new Promise(res => setTimeout(() => res(), 1000));
+            }
+        }
     }
 
     async dumpDSDT() {
@@ -111,11 +184,13 @@ class BatteryPatcher {
 
         console.log("Dumping...");
         if(!this.dumper.dumpDsdt()) process.exit();
-        console.log("Decompiling...");
-        if(!this.iasl.decompile("dsdt")) process.exit();
         console.log(`DSDT is at ${__dirname}\\Results\\DSDT`);
         
         await new Promise(res => setTimeout(() => res(), 1000));
+    }
+
+    async decompile() {
+        
     }
 
     async crawler() {
@@ -126,6 +201,8 @@ class BatteryPatcher {
         let dsdt: DSDT;
 
         try {
+            console.log("Decompiling...");
+            if(!this.iasl.decompile("dsdt")) throw new Error("Not able to decompile DSDT");
             dsdtString = readFileSync("./Results/dsdt.dsl", { encoding: "UTF8" });
             dsdt = new DSDT(dsdtString);
         } catch (err) {
@@ -301,24 +378,52 @@ class BatteryPatcher {
         return patch;
     }
 
+    exit() {
+        console.clear();
+        header();
+
+        console.log("This program can be found at: " + chalk.cyan("https://github.com/1Revenger1/BatteryPatcher"));
+        console.log("Have a good day!");
+        process.exit(0);
+    }
+
     async main() {
         // good ol' while(true)
         while (true) {
             console.clear();
             header();
 
-            console.log("1. Dump DSDT");
-            console.log("2. Patch Battery");
-            console.log("q. Quit");
+            console.log(chalk.cyan("1.") + " Change DSDT Location");
+            console.log(chalk.cyan("2.") + " Patch Battery");
+           
+            if (this.dumper.hasAcpiDump()) {
+                console.log(chalk.cyan("3.") + "Dump ACPI");
+            } else if (process.platform != "darwin") {
+                console.log(chalk.strikethrough.cyan("3.") + chalk.strikethrough("Dump ACPI")
+                 + " - Missing acpidump! Make sure it's in PATH or /Executables");
+            }
+            
+            console.log(chalk.cyan("q.") + " Quit");
             console.log(); // Newline
 
+            let amlMsg;
+            if (this.findDSDT()) amlMsg = chalk.green(this.dsdtPath);
+            else amlMsg = chalk.green(this.dsdtPath) + chalk.red(" - DSDT not found.\n")
+             + `Either place it under ${this.dsdtPath} or`
+             + chalk.cyan("\n-") + " select \"Dump DSDT\" (Windows/Linux only)"
+             + chalk.cyan("\n-") + " select \"Change DSDT Location\"\n";
+
+            console.log(chalk.cyan`DSDT.aml Location: ` + amlMsg);
+            console.log(`To refresh, press ${chalk.redBright("any key")} and press enter\n`);
+
             let res = await prompt("Choose an option (q)");
-            if(res.toLowerCase().startsWith("q")) break;
-            if(res.toLowerCase().startsWith("1")) await this.dumpDSDT();
+            if(res.toLowerCase().startsWith("q")) this.exit();
+            if(res.toLowerCase().startsWith("1")) await this.changeDSDTLoc();
             if(res.toLowerCase().startsWith("2")) await this.crawler();
+            if(res.toLowerCase().startsWith("3")) await this.dumpDSDT();
         }
     }
 }
-
 const patcher = new BatteryPatcher();
+process.on("SIGINT", () => patcher.exit());
 patcher.main();
