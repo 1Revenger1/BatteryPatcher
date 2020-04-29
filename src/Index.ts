@@ -58,12 +58,21 @@ class iASL {
         }
     }
 
-    compile (file : string) {
+    compile (file : string) : boolean {
         try {
             accessSync("./Results/".concat(file, ".dsl"), constants.R_OK);
         } catch (err) {
-
+            console.log("Unable to find SSDT to compile");
+            return false;
         }
+
+        let prc = spawnSync (this.executable, [`./Results/${file}.dsl`]);
+        if (prc.stderr) { 
+            console.log(prc.stderr.toString());
+            console.log("Unable to compile SSDT-BATT!");
+            return false;
+        }
+        return true;
     }
 
 }
@@ -107,7 +116,7 @@ class acpiDump {
         try {
             if (process.platform == "win32")
                 execSync("del .\\Results\\dsdt.*");
-            else execSync("rm .\\Results\\dsdt.*");
+            else execSync("rm ./Results/dsdt.*");
         } catch (err) {
             // No DSDT, no need to delete
         }
@@ -115,9 +124,21 @@ class acpiDump {
         // -o ./Results/DSDT.aml just generates an empty file
         // So change current working dir to avoid using -o
         let opts = [ "-n", "DSDT", "-b" ];
-        let prc = spawnSync (this.executable, opts, { cwd: "./Results" });
-        if (!prc.status) execSync("mv dsdt.dat DSDT.aml", { cwd: "./Results"});
-        return prc.status == 0;
+
+        if (process.platform != "win32") {
+            console.log("acpidump requires elevated privileges to dump, you may be asked to enter a password");
+            opts.unshift(this.executable);
+        }
+
+        let prc = spawnSync (process.platform == "win32" ? this.executable : "sudo", opts, { cwd: "./Results" });
+        
+        if (prc.status) {
+            console.log(prc.stderr.toString());
+            return false;
+        }
+        if (process.platform == "win32") execSync("move dsdt.dat DSDT.aml", { cwd: "./Results"});
+        else execSync("mv dsdt.dat DSDT.aml", { cwd: "./Results"});
+        return true;
     }
 }
 
@@ -182,14 +203,16 @@ class BatteryPatcher {
         }
 
         console.log("Dumping...");
-        if(!this.dumper.dumpDsdt()) process.exit();
-        console.log(`DSDT is at ${__dirname}\\Results\\DSDT`);
-        
-        await new Promise(res => setTimeout(() => res(), 1000));
-    }
+        if(!this.dumper.dumpDsdt()) {
+            console.log("An error occured dumping your DSDT...");
+            console.log("Note for those using WSL that acpidump won't work in WSL");
+            await prompt ("Press enter to continue...");
+            return;
+        }
 
-    async decompile() {
+        console.log(`DSDT is at ${this.dsdtPath.replace(/(\.aml|\.dat)/g, ".dsl")}`);
         
+        await prompt("Press enter to continue...");
     }
 
     async crawler() {
@@ -297,11 +320,14 @@ class BatteryPatcher {
         });
 
         let compPlist = plist.build(newPlist);
-        writeFileSync("./Results/oc_patches", compPlist);
+        writeFileSync("./Results/oc_patches.plist", compPlist);
 
-        await prompt(chalk.green("Finished! You'll find SSDT-BATT and a set of ACPI patches in the Results folder\n")
-             + "Press enter to continue...");
-
+        if (!this.iasl.compile("SSDT-BATT")) {
+            await prompt("Press enter to continue...");
+        } else {
+            await prompt(chalk.green("Finished! You'll find SSDT-BATT and a set of ACPI patches in the Results folder\n")
+            + "Press enter to continue...");
+        }
     }
 
     matchEC (line : string, filteredECs : OperatingRegion[]) : string | null {
