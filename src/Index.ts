@@ -105,7 +105,9 @@ class acpiDump {
 
     dumpDsdt () : boolean {
         try {
-            execSync("del .\\Results\\dsdt.*")
+            if (process.platform == "win32")
+                execSync("del .\\Results\\dsdt.*");
+            else execSync("rm .\\Results\\dsdt.*");
         } catch (err) {
             // No DSDT, no need to delete
         }
