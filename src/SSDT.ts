@@ -233,7 +233,8 @@ export class SSDT {
                                 extStr = (`\tExternal (${orScope + (orScope != "\\" ? "." : "") + orResult.name}, FieldUnitObj)`);
                             else if (dsdt.variable.has(result)) {
                                 let variab = dsdt.variable.get(result);
-                                extStr = (`\tExternal (${(variab!.scope ? variab!.scope + ".": "\\") + variab!.name}, ${
+                                if (result.includes("OWAK")) console.log(variab);
+                                extStr = (`\tExternal (${(variab!.scope && variab!.scope != "\\" ? variab!.scope + ".": "\\") + variab!.name}, ${
                                     ObjType[variab!.type].toString()})`);
                             } else if (line.includes("Notify")) {
                                 if (result == "_SB")

@@ -1,5 +1,5 @@
 import { accessSync, constants, readFileSync, writeFileSync, fstat, existsSync } from "fs";
-import { spawnSync, execSync } from "child_process";
+import { spawnSync, execSync, spawn } from "child_process";
 import { DSDT, OperatingRegion, Field, FieldUnit, OpRegTypes, Method } from "./DSDT";
 import { SSDT } from "./SSDT";
 import * as plist from "plist";
@@ -11,7 +11,12 @@ process.chdir(__dirname);
 try {
     accessSync("./Results", constants.R_OK | constants.W_OK);
 } catch (err) {
-    spawnSync("mkdir", ["./Results"]);
+    try {
+        execSync("mkdir Results");
+    } catch (err) {
+        console.log("Unable to make ./Results directory");
+        process.exit();
+    }
 }
 
 // console.clear();
@@ -67,7 +72,7 @@ class iASL {
         }
 
         let prc = spawnSync (this.executable, [`./Results/${file}.dsl`]);
-        if (prc.stderr) { 
+        if (prc.stderr && prc.status) { 
             console.log(prc.stderr.toString());
             console.log("Unable to compile SSDT-BATT!");
             return false;
