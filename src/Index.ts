@@ -1,8 +1,11 @@
-import { accessSync, constants, readFileSync } from "fs";
+import { accessSync, constants, readFileSync, writeFileSync } from "fs";
 import { spawnSync, execSync } from "child_process";
 import { DSDT, OperatingRegion, Field, FieldUnit, OpRegTypes, Method } from "./DSDT";
 import { SSDT } from "./SSDT";
+import * as plist from "plist";
+import chalk from "chalk";
 
+chalk.green("Hello");
 process.chdir(__dirname);
 
 // console.clear();
@@ -119,94 +122,108 @@ class BatteryPatcher {
         console.clear();
         header();
 
+        let dsdtString: string;
+        let dsdt: DSDT;
+
         try {
-            let dsdtString = readFileSync("./Results/dsdt.dsl", { encoding: "UTF8" });
-            let dsdt = new DSDT(dsdtString);
-
-            let filteredECs : OperatingRegion[] = [];
-
-            // Filter for fields above 8 bits
-            dsdt.operatingRegions.forEach(rg => {
-                if (rg.type != OpRegTypes.EmbeddedControl) return;
-                let filteredRG = {
-                    ...rg
-                }
-
-                filteredRG.fields = [];
-
-                rg.fields.forEach(field => {
-                    let filteredField = {
-                        name: field.name,
-                        fieldUnits: new Map<string, FieldUnit>()
-                    }
-
-                    field.fieldUnits.forEach(fieldObj => {
-                        if (!fieldObj.name.includes("Offset") && fieldObj.size > 8)
-                            filteredField.fieldUnits.set(fieldObj.name, fieldObj)
-                    });
-
-                    console.log(filteredField.fieldUnits);
-                    filteredRG.fields.push(filteredField);
-                });
-
-                filteredECs.push(filteredRG);
-                console.log(filteredRG);
-            });
-
-            let found = 0;
-
-            let editedMethods : Method[] = [];
-
-            // Loop again for methods
-            dsdt.methods.forEach(method => { 
-                let needsPatch = false;
-                let editedMethod = {
-                    ...method
-                }
-
-                editedMethod.lines = method.lines.slice(0);
-
-                method.lines.forEach((line, lineNum) => {
-                    
-                    let scopeResults = undefined;
-                    if (method.scope)
-                        scopeResults = (method.scope + "." + method.name).match(/(H_EC|ECDV|PGEC|EC0|EC)/g);
-                    let result;
-
-                    // if (method.name == "GBIX") console.log(method.scope);
-                    // If in the scope of EC, we have to check every line for references to field objs in EC fields
-                    if (scopeResults && (result = this.matchEC(line, filteredECs))) {
-                        line = line.replace(`${result}`, `[[${result}]]`);
-                        console.log(`${method.name}, ${result}`);
-                        needsPatch = true; 
-                    // Outside of scope for EC, we can just check for references to EC
-                    } else if (result = this.matchOutsideEC(line, filteredECs, lineNum)) {
-                        result.forEach(str => {
-                            line = line.replace(str, `[[${str}]]`)
-                        });
-                        needsPatch = true;
-                    }
-
-                    // Save away edited line
-                    editedMethod.lines[lineNum] = line.trim();
-                });
-
-                if (needsPatch) editedMethods.push(editedMethod);
-            });
-
-            // Yeet we've got it all
-            // Time to patch
-
-            const ssdt = new SSDT(filteredECs, editedMethods, dsdt);
-
+            dsdtString = readFileSync("./Results/dsdt.dsl", { encoding: "UTF8" });
+            dsdt = new DSDT(dsdtString);
         } catch (err) {
             console.log(err);
             console.log(`Not able to find decompiled DSDT at ${__dirname}/Results/dsdt.dsl!`);
             process.exit();
         }
 
+        let filteredECs : OperatingRegion[] = [];
 
-        await prompt("Press enter to continue...");
+        // Filter for fields above 8 bits
+        dsdt.operatingRegions.forEach(rg => {
+            if (rg.type != OpRegTypes.EmbeddedControl) return;
+            let filteredRG = {
+                ...rg
+            }
+
+            filteredRG.fields = [];
+
+            rg.fields.forEach(field => {
+                let filteredField = {
+                    name: field.name,
+                    fieldUnits: new Map<string, FieldUnit>()
+                }
+
+                field.fieldUnits.forEach(fieldObj => {
+                    if (!fieldObj.name.includes("Offset") && fieldObj.size > 8)
+                        filteredField.fieldUnits.set(fieldObj.name, fieldObj)
+                });
+
+                console.log(filteredField.fieldUnits);
+                filteredRG.fields.push(filteredField);
+            });
+
+            filteredECs.push(filteredRG);
+            console.log(filteredRG);
+        });
+
+        let editedMethods : Method[] = [];
+
+        // Loop again for methods
+        dsdt.methods.forEach(method => { 
+            let needsPatch = false;
+            let editedMethod = {
+                ...method
+            }
+
+            editedMethod.lines = method.lines.slice(0);
+
+            method.lines.forEach((line, lineNum) => {                
+                let scopeResults = undefined;
+                if (method.scope)
+                    scopeResults = (method.scope + "." + method.name).match(/(H_EC|ECDV|PGEC|EC0|EC)/g);
+                let result;
+
+                // If in the scope of EC, we have to check every line for references to field objs in EC fields
+                if (scopeResults && (result = this.matchEC(line, filteredECs))) {
+                    line = line.replace(`${result}`, `[[${result}]]`);
+                    console.log(`${method.name}, ${result}`);
+                    needsPatch = true; 
+                // Outside of scope for EC, we can just check for references to EC
+                } else if (result = this.matchOutsideEC(line, filteredECs, lineNum)) {
+                    result.forEach(str => {
+                        line = line.replace(str, `[[${str}]]`)
+                    });
+                    needsPatch = true;
+                }
+
+                // Save away edited line
+                editedMethod.lines[lineNum] = line.trim();
+            });
+
+            if (needsPatch) editedMethods.push(editedMethod);
+        });
+
+        // Time to patch
+        const ssdt = new SSDT(filteredECs, editedMethods, dsdt);
+
+        let newPlist = {
+            "ACPI":
+            {
+                "Patch": new Array<any>()
+            }
+        };
+
+        console.log ("creating binary patches...");
+        // Creating binary patches...
+        editedMethods.forEach(method => {
+            let newName = `X${method.name.substring(1)}`
+
+            newPlist.ACPI.Patch.push(this.createPatch(method.name, newName, method));
+        });
+
+        let compPlist = plist.build(newPlist);
+        writeFileSync("./Results/oc_patches", compPlist);
+
+        await prompt(chalk.green("Finished! You'll find SSDT-BATT and a set of ACPI patches in the Results folder\n")
+             + "Press enter to continue...");
 
     }
 
@@ -262,6 +279,26 @@ class BatteryPatcher {
         }
 
         return false;
+    }
+
+    createPatch (from: string, string: string, method: Method) : {} {
+        let patch =  {
+            "Comment": `${from} to ${string} (EC Method Rename)`,
+            "Enabled": true,
+            "Find" : Buffer.alloc(from.length + 1),
+            "Replace": Buffer.alloc(string.length + 1),
+            "Count" : 0,
+            "ReplaceMask": Buffer.from(""),
+            "FindMask": Buffer.from("")
+        }
+
+        patch.Find.write(from);
+        patch.Replace.write(string);
+
+        patch.Find.writeInt8(parseInt(method.header.split(",")[1]), patch.Find.length - 1);
+        patch.Replace.writeInt8(parseInt(method.header.split(",")[1]), patch.Replace.length - 1);
+
+        return patch;
     }
 
     async main() {

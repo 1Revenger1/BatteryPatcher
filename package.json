@@ -13,5 +13,10 @@
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^13.13.0"
+  },
+  "dependencies": {
+    "@types/plist": "^3.0.2",
+    "chalk": "^4.0.0",
+    "plist": "^3.0.1"
   }
 }
