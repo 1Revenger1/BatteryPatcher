@@ -23,25 +23,20 @@ class iASL {
         this.executable = "./Executables/iasl";
 
         try {
-            if (process.platform == "win32") {
-                let res = execSync("which iasl");
-                // TODO figure this out
-            } else {
-                let res = execSync("type iasl");
-                if (res.toString().includes("is")) {
-                    console.log("Found iASL in path");
-                    this.executable = "iasl";
-                }
+            let res = spawnSync("where", ["iasl"]);
+            console.log(res);
+            if (res.status == 0) {
+                console.log("Found iASL in path");
+                this.executable = "iasl";
             }
 
             if (this.executable.includes("\.")) {
-                console.log(this.executable);
                 accessSync(this.executable, constants.R_OK);
                 console.log("Found under Executables");  
             }
         } catch (err) {
-            console.log(err);
-            console.log(chalk.red("Add iasl to the Executables folder OR add it to your PATH"));
+            // console.log(err);
+            console.log(chalk.red("iASL not found!\n") + "Add iasl to the Executables folder OR add it to your PATH");
             process.exit(1);
         }
     }
@@ -78,26 +73,28 @@ class acpiDump {
             // No acpidump for macOS
             if (process.platform == "darwin") return;
             if (process.platform == "win32") {
-                let res = execSync("which acpidump");
-                // TODO figure this out
+                let res = spawnSync("where", ["acpidump"]);
+                if (res.status == 0) {
+                    this.executable == "acpidump";
+                    this.noDump = false;
+                }
             } else {
-                let res = execSync("type acpidump");
-                if (res.toString().includes("is")) {
+                let res = spawnSync("type", ["acpidump"]);
+                if (res.status == 0) {
                     console.log("Found acpidump in path");
                     this.executable == "acpidump";
                     this.noDump = false;
                 }
             }
 
-
-            if (this.executable.includes(".")) {
+            if (this.executable.includes("\.")) {
                 accessSync(this.executable, constants.R_OK);
                 console.log("Found under Executables");
                 this.noDump = false;  
             }
         } catch (err) {
-            console.log(err);
-            // console.log(chalk.red("Add acpidump to the Executables folder OR add it to your PATH"));
+            // console.log(err);
+            console.log(chalk.yellow("ACPIDump not found!\n") + "ACPIDump is needed for dumping ACPI in Windows/Linux\nAdd acpidump to the Executables folder OR add it to your PATH");
             // process.exit(1);
         }
     }
