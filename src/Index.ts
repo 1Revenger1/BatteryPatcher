@@ -8,6 +8,12 @@ import chalk from "chalk";
 chalk.green("Hello");
 process.chdir(__dirname);
 
+try {
+    accessSync("./Results", constants.R_OK | constants.W_OK);
+} catch (err) {
+    spawnSync("mkdir", ["./Results"]);
+}
+
 // console.clear();
 
 function header() {
@@ -23,19 +29,19 @@ class iASL {
         this.executable = "./Executables/iasl";
 
         try {
-            let res = spawnSync("where", ["iasl"]);
-            console.log(res);
+            let res = spawnSync(
+                process.platform == "win32" ? "where" : "which",
+                ["iasl"]);
             if (res.status == 0) {
                 console.log("Found iASL in path");
                 this.executable = "iasl";
             }
 
             if (this.executable.includes("\.")) {
-                accessSync(this.executable, constants.R_OK);
+                accessSync(this.executable + (process.platform == "win32" ? ".exe" : ""), constants.R_OK);
                 console.log("Found under Executables");  
             }
         } catch (err) {
-            // console.log(err);
             console.log(chalk.red("iASL not found!\n") + "Add iasl to the Executables folder OR add it to your PATH");
             process.exit(1);
         }
@@ -43,8 +49,8 @@ class iASL {
 
     decompile (file : string) : boolean {
         try {
-            accessSync("./Results/".concat(file, ".dat"), constants.R_OK | constants.W_OK);
-            let prc = spawnSync ("./Executables/iasl", ["./Results/".concat(file, ".dat")]);
+            accessSync(file, constants.R_OK | constants.W_OK);
+            let prc = spawnSync (this.executable, [file]);
             return prc.status == 0;
         } catch (err) {
             console.log(err);
@@ -72,24 +78,18 @@ class acpiDump {
         try {
             // No acpidump for macOS
             if (process.platform == "darwin") return;
-            if (process.platform == "win32") {
-                let res = spawnSync("where", ["acpidump"]);
-                if (res.status == 0) {
-                    this.executable == "acpidump";
-                    this.noDump = false;
-                }
-            } else {
-                let res = spawnSync("type", ["acpidump"]);
-                if (res.status == 0) {
-                    console.log("Found acpidump in path");
-                    this.executable == "acpidump";
-                    this.noDump = false;
-                }
+            let res = spawnSync(
+                process.platform == "win32" ? "where" : "which",
+                ["acpidump"]);
+            if (res.status == 0) {
+                console.log("Found acpidump in path");
+                this.executable = "acpidump";
+                this.noDump = false;
             }
 
             if (this.executable.includes("\.")) {
-                accessSync(this.executable, constants.R_OK);
-                console.log("Found under Executables");
+                accessSync(this.executable + (process.platform == "win32" ? ".exe" : ""), constants.R_OK);
+                console.log("Found acpidump under Executables");
                 this.noDump = false;  
             }
         } catch (err) {
@@ -105,9 +105,7 @@ class acpiDump {
 
     dumpDsdt () : boolean {
         try {
-            accessSync("./Results/DSDT.aml", constants.R_OK);
-            let prc = execSync ("del .\\Results\\DSDT.aml");
-            let prc2 = execSync ("del .\\Results\\dsdt.pre");
+            execSync("del .\\Results\\dsdt.*")
         } catch (err) {
             // No DSDT, no need to delete
         }
@@ -115,10 +113,8 @@ class acpiDump {
         // -o ./Results/DSDT.aml just generates an empty file
         // So change current working dir to avoid using -o
         let opts = [ "-n", "DSDT", "-b" ];
-        let prc = spawnSync ("../Executables/acpidump.exe", opts, { cwd: "./Results" });
-        if (prc.status) {
-            console.log(prc.output[2].toString());
-        }
+        let prc = spawnSync (this.executable, opts, { cwd: "./Results" });
+        if (!prc.status) execSync("mv dsdt.dat DSDT.aml", { cwd: "./Results"});
         return prc.status == 0;
     }
 }
@@ -142,7 +138,7 @@ class BatteryPatcher {
     dumper = new acpiDump();
     iasl = new iASL();
 
-    dsdtPath = "./Results/DSDT.dsl";
+    dsdtPath = "./Results/DSDT.aml";
 
     constructor() {
         // idk do constructy things
@@ -150,7 +146,6 @@ class BatteryPatcher {
     }
 
     findDSDT (loc?: string) : Boolean {
-        // if (loc) console.log(loc);
         return existsSync(loc ? loc : this.dsdtPath);
     }
 
@@ -179,6 +174,11 @@ class BatteryPatcher {
         console.clear();
         header();
 
+        if (!this.dumper.hasAcpiDump()) {
+            console.log(`${chalk.red("No acpidump!")}\nMake sure you have acpidump either in your PATH or under ./Executables`);
+            await prompt("Press enter to continue...");
+        }
+
         console.log("Dumping...");
         if(!this.dumper.dumpDsdt()) process.exit();
         console.log(`DSDT is at ${__dirname}\\Results\\DSDT`);
@@ -199,13 +199,14 @@ class BatteryPatcher {
 
         try {
             console.log("Decompiling...");
-            if(!this.iasl.decompile("dsdt")) throw new Error("Not able to decompile DSDT");
-            dsdtString = readFileSync("./Results/dsdt.dsl", { encoding: "UTF8" });
+            if(!this.iasl.decompile(this.dsdtPath)) throw new Error("Not able to decompile DSDT");
+            dsdtString = readFileSync(this.dsdtPath.replace(/(\.aml|\.dat)/g, ".dsl"), { encoding: "UTF8" });
             dsdt = new DSDT(dsdtString);
         } catch (err) {
             console.log(err);
             console.log(`Not able to find decompiled DSDT at ${__dirname}/Results/dsdt.dsl!`);
-            process.exit();
+            await prompt("Press enter to continue...");
+            return;
         }
 
         let filteredECs : OperatingRegion[] = [];
@@ -394,9 +395,9 @@ class BatteryPatcher {
             console.log(chalk.cyan("2.") + " Patch Battery");
            
             if (this.dumper.hasAcpiDump()) {
-                console.log(chalk.cyan("3.") + "Dump ACPI");
+                console.log(chalk.cyan("3.") + " Dump ACPI");
             } else if (process.platform != "darwin") {
-                console.log(chalk.strikethrough.cyan("3.") + chalk.strikethrough("Dump ACPI")
+                console.log(chalk.strikethrough.cyan("3.") + chalk.strikethrough(" Dump ACPI")
                  + " - Missing acpidump! Make sure it's in PATH or /Executables");
             }
             
