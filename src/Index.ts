@@ -1,20 +1,32 @@
 import { accessSync, constants, readFileSync, writeFileSync, fstat, existsSync } from "fs";
-import { spawnSync, execSync, spawn } from "child_process";
-import { DSDT, OperatingRegion, Field, FieldUnit, OpRegTypes, Method } from "./DSDT";
+import { spawnSync, execSync } from "child_process";
+import { DSDT, OperatingRegion, FieldUnit, OpRegTypes, Method } from "./DSDT";
 import { SSDT } from "./SSDT";
 import * as plist from "plist";
 import chalk from "chalk";
+import { resolve } from "path";
 
 chalk.green("Hello");
 process.chdir(__dirname);
 
 try {
-    accessSync("./Results", constants.R_OK | constants.W_OK);
+    accessSync("../Results", constants.R_OK | constants.W_OK);
 } catch (err) {
     try {
-        execSync("mkdir Results");
+        execSync("mkdir Results", { cwd: "../"});
     } catch (err) {
-        console.log("Unable to make ./Results directory");
+        console.log("Unable to make ../Results directory");
+        process.exit();
+    }
+}
+
+try {
+    accessSync("../Executables", constants.R_OK | constants.W_OK);
+} catch (err) {
+    try {
+        execSync("mkdir Executables", { cwd: "../"});
+    } catch (err) {
+        console.log("Unable to make ../Executables directory");
         process.exit();
     }
 }
@@ -31,7 +43,7 @@ function header() {
 class iASL {
     executable: string;
     constructor() {
-        this.executable = "./Executables/iasl";
+        this.executable = "../Executables/iasl";
 
         try {
             let res = spawnSync(
@@ -65,13 +77,13 @@ class iASL {
 
     compile (file : string) : boolean {
         try {
-            accessSync("./Results/".concat(file, ".dsl"), constants.R_OK);
+            accessSync("../Results/".concat(file, ".dsl"), constants.R_OK);
         } catch (err) {
             console.log("Unable to find SSDT to compile");
             return false;
         }
 
-        let prc = spawnSync (this.executable, [`./Results/${file}.dsl`]);
+        let prc = spawnSync (this.executable, [`../Results/${file}.dsl`]);
         if (prc.stderr && prc.status) { 
             console.log(prc.stderr.toString());
             console.log("Unable to compile SSDT-BATT!");
@@ -87,7 +99,7 @@ class acpiDump {
     noDump: boolean;
 
     constructor() {
-        this.executable = "./Executables/acpidump";
+        this.executable = "../Executables/acpidump";
         this.noDump = true;
         try {
             // No acpidump for macOS
@@ -120,8 +132,8 @@ class acpiDump {
     dumpDsdt () : boolean {
         try {
             if (process.platform == "win32")
-                execSync("del .\\Results\\dsdt.*");
-            else execSync("rm ./Results/dsdt.*");
+                execSync("del ..\\Results\\dsdt.*");
+            else execSync("rm ../Results/dsdt.*");
         } catch (err) {
             // No DSDT, no need to delete
         }
@@ -135,14 +147,14 @@ class acpiDump {
             opts.unshift(this.executable);
         }
 
-        let prc = spawnSync (process.platform == "win32" ? this.executable : "sudo", opts, { cwd: "./Results" });
+        let prc = spawnSync (process.platform == "win32" ? this.executable : "sudo", opts, { cwd: "../Results" });
         
         if (prc.status) {
             console.log(prc.stderr.toString());
             return false;
         }
-        if (process.platform == "win32") execSync("move dsdt.dat DSDT.aml", { cwd: "./Results"});
-        else execSync("mv dsdt.dat DSDT.aml", { cwd: "./Results"});
+        if (process.platform == "win32") execSync("move dsdt.dat DSDT.aml", { cwd: "../Results"});
+        else execSync("mv dsdt.dat DSDT.aml", { cwd: "../Results"});
         return true;
     }
 }
@@ -166,7 +178,7 @@ class BatteryPatcher {
     dumper = new acpiDump();
     iasl = new iASL();
 
-    dsdtPath = "./Results/DSDT.aml";
+    dsdtPath = "../Results/DSDT.aml";
 
     constructor() {
         // idk do constructy things
@@ -192,7 +204,7 @@ class BatteryPatcher {
             // console.log(res);
             if (this.findDSDT(res)) return this.dsdtPath = res;
             else {
-                console.log(chalk.red("Could not find DSDT at ") + chalk.yellow(res) + chalk.red("!"));
+                console.log(chalk.red("Could not find DSDT at ") + chalk.yellow(resolve(res)) + chalk.red("!"));
                 await new Promise(res => setTimeout(() => res(), 1000));
             }
         }
@@ -215,7 +227,8 @@ class BatteryPatcher {
             return;
         }
 
-        console.log(`DSDT is at ${this.dsdtPath.replace(/(\.aml|\.dat)/g, ".dsl")}`);
+        console.log(chalk.green("Success!"));
+        console.log(`DSDT is at ${chalk.cyan(resolve(this.dsdtPath.replace(/(\.aml|\.dat)/g, ".dsl")))}`);
         
         await prompt("Press enter to continue...");
     }
@@ -316,7 +329,7 @@ class BatteryPatcher {
             }
         };
 
-        console.log ("creating binary patches...");
+        console.log ("Creating binary patches...");
         // Creating binary patches...
         editedMethods.forEach(method => {
             let newName = `X${method.name.substring(1)}`
@@ -325,7 +338,7 @@ class BatteryPatcher {
         });
 
         let compPlist = plist.build(newPlist);
-        writeFileSync("./Results/oc_patches.plist", compPlist);
+        writeFileSync("../Results/oc_patches.plist", compPlist);
 
         if (!this.iasl.compile("SSDT-BATT")) {
             await prompt("Press enter to continue...");
@@ -438,13 +451,13 @@ class BatteryPatcher {
             console.log(); // Newline
 
             let amlMsg;
-            if (this.findDSDT()) amlMsg = chalk.green(this.dsdtPath);
-            else amlMsg = chalk.green(this.dsdtPath) + chalk.red(" - DSDT not found.\n")
-             + `Either place it under ${this.dsdtPath} or`
+            if (this.findDSDT()) amlMsg = chalk.green(resolve(this.dsdtPath));
+            else amlMsg = chalk.green(resolve(this.dsdtPath)) + chalk.red(" - DSDT not found.\n")
+             + `Either place it under ${resolve(this.dsdtPath)} or`
              + chalk.cyan("\n-") + " select \"Dump DSDT\" (Windows/Linux only)"
              + chalk.cyan("\n-") + " select \"Change DSDT Location\"\n";
 
-            console.log(chalk.cyan`DSDT.aml Location: ` + amlMsg);
+            console.log(chalk.cyan('DSDT.aml location: ' + amlMsg));
             console.log(`To refresh, press ${chalk.redBright("any key")} and press enter\n`);
 
             let res = await prompt("Choose an option (q)");

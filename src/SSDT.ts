@@ -344,7 +344,7 @@ export class SSDT {
         this.lines.push("}");
 
         console.log("Writing SSDT-BATT.dsl...");
-        writeFileSync("./Results/SSDT-BATT.dsl", this.lines.join("\n"));
+        writeFileSync("../Results/SSDT-BATT.dsl", this.lines.join("\n"));
     }
 
     tab(depth: number) {
