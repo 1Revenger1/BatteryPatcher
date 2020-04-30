@@ -104,7 +104,7 @@ export class DSDT {
         let lines = this.pruneDSDT(dsdt);
         let depth = 0;
         let scopeStack : number[] = [];
-        let scopeContext : string[] = [];
+        let scopeContext : string[] = ["\\"];
 
         let method : Method | null;
         let field : Field | null;
@@ -163,9 +163,10 @@ export class DSDT {
 
             if (res = line.match(/(?<=Scope \()\\?([0-9a-zA-Z_]{1,4}(\.)?)+/g)) {
                 let name;
-                if (!res[0].includes("\\"))
-                    name = scopeContext[scopeContext.length - 1] + "." + res[0];
-                else 
+                if (!res[0].includes("\\")) {
+                    let period = scopeContext[scopeContext.length - 1] == "\\" ? "" : ".";
+                    name = scopeContext[scopeContext.length - 1] + period + res[0];
+                } else 
                     name = res[0];
 
                 scopeContext.push(name);
