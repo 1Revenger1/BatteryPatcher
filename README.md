@@ -3,8 +3,9 @@
 Aims to dump DSDT and crawl through it for EC fields greater than 8 bits and create an SSDT for them.
 This requires acpidump and iasl - make sure these are in your executables folder
 
-### This should be ran in Windows or Linux, booted directly from your UEFI to make sure the DSDT is clean
-### This can be ran on macOS but you'll have to provide the DSDT.aml
+* Dumps DSDT (Windows/Linux only)
+* Creates an SSDT and set of method renames
+  * This assumes that you do not rename your EC, and use a fake EC instead. Some devices (like Lenovo's) already have their EC named as EC, so those people do need need to worry.
 
 ### Dependencies
 * NodeJS
