@@ -9,9 +9,9 @@ This requires acpidump and iasl - make sure these are in your executables folder
 ### Dependencies
 * NodeJS
 * `npm install` should install all the dependecies other than iasl/acpidump
-* `npm install -g typescript` to get the typescript compiler
 * You can get iasl/acpidump from your package manager in linux, or from [acpica](https://www.acpica.org/downloads/binary-tools)
   * MaciASL comes with iASL as well. I usually do `ln -s /Applications/MaciASL/Contents/macOS/iasl-stable /usr/local/bin` to symlink it into PATH
+  * If your not putting iasl/acpidump in PATH, put it under ./Executables
   
 ### Running
-`tsc && node ./out/Index.js`
+`npm run start`
