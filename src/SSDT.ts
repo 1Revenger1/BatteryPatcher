@@ -72,7 +72,7 @@ export class SSDT {
         let ExternalPrints : string[] = [];
         // All modified field units across all EC regions/fields
         let modifiedEntryList = new Map<string, FieldUnit[]>();
-        let over32bits = new Map<string, number>();
+        let takenNames : string[] = [];
 
         // Calculate modifications and new fields
         // Print out resulting new fields
@@ -92,7 +92,7 @@ export class SSDT {
                     return false;
                 })[0];
 
-                let modifiedEntries = this.calculateMods(ecIndex, fieldIndex);
+                let modifiedEntries = this.calculateMods(ecIndex, fieldIndex, takenNames);
                 modifiedEntries.forEach((unit, key) => modifiedEntryList.set(key, unit));
 
                 // If empty map then something is very very wrong
@@ -352,7 +352,7 @@ export class SSDT {
         return new Array(depth).fill("\t").join("");
     }
 
-    calculateMods(ecIndex: number, fieldIndex: number) : Map<string,FieldUnit[]> {
+    calculateMods(ecIndex: number, fieldIndex: number, taken: string[]) : Map<string,FieldUnit[]> {
         let map = new Map<string,FieldUnit[]>();
 
         let toRename = this.filteredEC[ecIndex].fields[fieldIndex];
@@ -362,9 +362,18 @@ export class SSDT {
                 map.set(unit.name, [{name: "GREATERTHAN32", size: unit.size }]);
             } else {
                 let array = [];
+                let newName = `${unit.name.charAt(0)}${unit.name.substring(2,4)}`;
+                for (let i = 1; taken.includes(newName + "0"); i++) {
+                    let changeIndex = i % 2 + 1;
+                    newName = newName.substring(0, changeIndex) + String.fromCharCode(newName.charCodeAt(changeIndex) + 1) + newName.substring(changeIndex + 1);
+                }
+                
+                taken.push(newName + "0");
+                console.log("New name = " + newName);
+            
                 for (let i = 0; i < (unit.size > 16 ? 4: 2); i++) {
                     array.push({
-                        name: `${unit.name.charAt(0)}${unit.name.substring(2,4)}${i}`,
+                        name: `${newName}${i}`,
                         size: 8
                     })
                 }
