@@ -199,14 +199,12 @@ class BatteryPatcher {
             console.log(chalk.cyan("Linooox/macOS: ") + " Drag and drop your DSDT.aml into this prompt\n");
 
             let res = await prompt("New DSDT Location (q to go to the menu)");
-            res = res.replace(/[\n\r]/g, "");
+            res = res.trim().replace(/[\n\r]/g, "");
             if (res == "q") return;
-            console.log(res);
             if (this.findDSDT(res)) return this.dsdtPath = res;
             else {
                 console.log(chalk.red("Could not find DSDT at ") + chalk.yellow(resolve(res)) + chalk.red("!"));
-                await prompt("jfdk");
-                //await new Promise(res => setTimeout(() => res(), 1000));
+                await new Promise(res => setTimeout(() => res(), 1000));
             }
         }
     }
