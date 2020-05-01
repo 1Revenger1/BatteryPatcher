@@ -201,11 +201,12 @@ class BatteryPatcher {
             let res = await prompt("New DSDT Location (q to go to the menu)");
             res = res.replace(/[\n\r]/g, "");
             if (res == "q") return;
-            // console.log(res);
+            console.log(res);
             if (this.findDSDT(res)) return this.dsdtPath = res;
             else {
                 console.log(chalk.red("Could not find DSDT at ") + chalk.yellow(resolve(res)) + chalk.red("!"));
-                await new Promise(res => setTimeout(() => res(), 1000));
+                await prompt("jfdk");
+                //await new Promise(res => setTimeout(() => res(), 1000));
             }
         }
     }
@@ -247,7 +248,7 @@ class BatteryPatcher {
             dsdt = new DSDT(dsdtString);
         } catch (err) {
             console.log(err);
-            console.log(`Not able to find decompiled DSDT at ${__dirname}/Results/dsdt.dsl!`);
+            console.log(`Not able to find decompiled DSDT at ${resolve(this.dsdtPath)}`);
             await prompt("Press enter to continue...");
             return;
         }

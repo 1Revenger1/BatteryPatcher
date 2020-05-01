@@ -158,7 +158,7 @@ export class SSDT {
         toModify = toModify.sort((a, b) => !a.scope ? 1 : !b.scope ? -1 : b.scope.localeCompare(a.scope));
         console.log(toModify.map(toModify => toModify.scope));
         
-        toModify.forEach(method => {
+        toModify.forEach((method, methI) => {
             if(method.scope != scope) { 
                 if (scope != "") {
                     // Replace new lines in previous line to clean up AESTHETICS at end of scopes
@@ -207,7 +207,7 @@ export class SSDT {
 
                         if (result.includes(" (")) {
                             let method = dsdt.methods.get(result.split(" ")[0]);
-                            if (method!.scope == undefined)
+                            if (method!.scope == undefined || method!.scope == "\\")
                                 extStr = (`\tExternal (\\${method!.name}, MethodObj)`);
                             else extStr = (`\tExternal (${method!.scope + "." + method!.name}, MethodObj)`);
                         } else {
@@ -233,7 +233,7 @@ export class SSDT {
                                 extStr = (`\tExternal (${orScope + (orScope != "\\" ? "." : "") + orResult.name}, FieldUnitObj)`);
                             else if (dsdt.variable.has(result)) {
                                 let variab = dsdt.variable.get(result);
-                                if (result.includes("OWAK")) console.log(variab);
+                                // console.log(variab);
                                 extStr = (`\tExternal (${(variab!.scope && variab!.scope != "\\" ? variab!.scope + ".": "\\") + variab!.name}, ${
                                     ObjType[variab!.type].toString()})`);
                             } else if (line.includes("Notify")) {
@@ -305,13 +305,14 @@ export class SSDT {
                     });
                 }
 
-
                 if (line.includes("{") && line.includes("}")) MethodPrints.push(`${this.tab(depth)}${line}`)
                 else if (line.includes("{")) MethodPrints.push(`${this.tab(depth++)}${line}`);
                 else if (line.includes("}")) MethodPrints.push(`${this.tab(--depth)}${line}`);
                 else MethodPrints.push(`${this.tab(depth)}${line}`);
             });
-            MethodPrints.push(`${this.tab(--depth)}}\n`)
+            MethodPrints.push(`${this.tab(--depth)}}`)
+            if (methI == toModify.length - 1 && method.scope && method.scope != "\\") MethodPrints.push(`${this.tab(--depth)}}\n`);
+            else MethodPrints.push("");
         });
 
         // Sort Externals to similar type
