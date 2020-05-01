@@ -160,12 +160,12 @@ export class SSDT {
         
         toModify.forEach((method, methI) => {
             if(method.scope != scope) { 
-                if (scope != "") {
+                if (scope != "" && scope != "\\") {
                     // Replace new lines in previous line to clean up AESTHETICS at end of scopes
                     MethodPrints.push(MethodPrints.pop()!.replace("\n", ""));
                     MethodPrints.push(`\t}\n`);
                 }
-                if (method.scope != undefined) {
+                if (method.scope != undefined && method.scope != "\\") {
                     MethodPrints.push(`\tScope(${method.scope})\n\t{`);
                     depth = 2;
                 } else {
