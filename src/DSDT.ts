@@ -126,7 +126,10 @@ export class DSDT {
                     depth = scopeStack.pop()!;
                     
                     if (method) {
-                        this.methods.set (method.name, method);
+                        let setName = (method.scope != undefined) && (method.scope != "\\")
+                            ? method.scope + "." + method.name
+                            : "\\" + method.name;
+                        this.methods.set (setName, method);
                         method = null;
                     }
     
@@ -182,13 +185,13 @@ export class DSDT {
                     type: ObjType.DeviceObj
                 }
                 console.log(variab);
-                this.variable.set(variab.name, variab);
+                this.variable.set(name, variab);
                 scopeContext.push(name);
                 scopeStack.push(depth);
                 depth = 0;
             }
 
-            if (res = line.match(/(?<=Method \()[0-9a-zA-Z_]{1,4}/g)) {
+            if (res = line.match(/(?<=Method \((\\)?)[0-9a-zA-Z_]{1,4}/g)) {
                 method = {
                     name: res[0],
                     lines : new Array(),
@@ -196,7 +199,7 @@ export class DSDT {
                     header: line.trim()
                 }
 
-                scopeContext.push(scopeContext[scopeContext.length - 1] + "." + method.name);
+                scopeContext.push(method.scope + "." + method.name);
                 scopeStack.push(depth);
                 depth = 0;
             }
@@ -211,17 +214,17 @@ export class DSDT {
                     scope: scopeContext[scopeContext.length - 1]
                 }
 
-                this.operatingRegions.set(or.name, or);
+                this.operatingRegions.set(or.scope + "." + or.name, or);
             }
 
             // We only care about EC for now...makes it simple to parse.
             // Possibly expand later?
             if ((res = line.match(/(?<= Field \()[0-9a-zA-Z_]{1,4}/g))
-                && this.operatingRegions.has(res[0].trim())
+                && this.operatingRegions.has(scopeContext[scopeContext.length - 1] + "." + res[0].trim())
                 /*&& this.operatingRegions.get(res[0].trim())!.type == OpRegTypes.EmbeddedControl*/) {
                     
                 // Yes, if we made it here it really exists...
-                let or = this.operatingRegions.get(res[0].trim())!;
+                let or = this.operatingRegions.get(scopeContext[scopeContext.length - 1] + "." + res[0].trim())!;
                 let newField = {
                     name: res[0].trim(),
                     fieldUnits: new Map<string, FieldUnit>()
@@ -255,7 +258,7 @@ export class DSDT {
                 else if (line.includes("\"")) variab.type = ObjType.StrObj;
                 if (line.includes("ResourceTemplate")) variab.type = ObjType.BuffObj;
 
-                this.variable.set(variab.name, variab);
+                this.variable.set(scopeContext[scopeContext.length - 1] + "." + variab.name, variab);
             }
 
             if (res = line.match(/(?<=External \()/g)) {
@@ -265,7 +268,8 @@ export class DSDT {
                     type: ObjType[trimmedArr[trimmedArr.length - 1] as keyof typeof ObjType],
                     scope: "\\" + trimmedArr.slice(0, trimmedArr.length - 2).join(".")
                 }
-                this.variable.set(variab.name, variab);
+                console.log((variab.scope != "\\" ? (variab.scope.replace("_SB_", "_SB") + ".") : ("\\")) + variab.name);
+                this.variable.set((variab.scope != "\\" ? (variab.scope.replace("_SB_", "_SB") + ".") : "\\") + variab.name, variab);
             }
             
             if (res = line.match(/(?<=ThermalZone \()[0-9a-zA-Z_]{1,4}/g)) {
@@ -275,7 +279,17 @@ export class DSDT {
                     scope: scopeContext[scopeContext.length - 1]
                 }
 
-                this.variable.set(variab.name, variab);
+                this.variable.set((variab.scope!= "\\" ? variab.scope + "." : "\\") + variab.name, variab);
+            }
+
+            if (res = line.match(/(?<=Event \()[0-9a-zA-Z_]{1,4}/g)) {
+                let variab : Variable = {
+                    name: res[0],
+                    type: ObjType.EventObj,
+                    scope: scopeContext[scopeContext.length - 1]
+                }
+                
+                this.variable.set((variab.scope!= "\\" ? variab.scope + "." : "\\") + variab.name, variab);
             }
 
             if (res = line.match(/(?<=Mutex \()[0-9a-zA-Z_]{1,4}/g)) {
@@ -287,6 +301,10 @@ export class DSDT {
 
                 this.variable.set(variab.name, variab);
             }
+        });
+
+        this.variable.forEach(obj => {
+            obj.scope = obj.scope.replace("_SB_", "_SB");
         });
 
         console.log("Done discovering DSDT!");

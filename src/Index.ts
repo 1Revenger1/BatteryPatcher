@@ -292,6 +292,8 @@ class BatteryPatcher {
 
             editedMethod.lines = method.lines.slice(0);
 
+            console.log(`Checking method ${method.name}, Scope: ${method.scope}`);
+
             method.lines.forEach((line, lineNum) => {                
                 let scopeResults = undefined;
                 if (method.scope)
@@ -301,13 +303,14 @@ class BatteryPatcher {
                 // If in the scope of EC, we have to check every line for references to field objs in EC fields
                 if (scopeResults && (result = this.matchEC(line, filteredECs))) {
                     line = line.replace(`${result}`, `[[${result}]]`);
-                    console.log(`${method.name}, ${result}`);
+                    console.log(`Found to replace in EC scope: ${method.name}, ${result}`);
                     needsPatch = true; 
                 // Outside of scope for EC, we can just check for references to EC
                 } else if (result = this.matchOutsideEC(line, filteredECs, lineNum)) {
                     result.forEach(str => {
                         line = line.replace(str, `[[${str}]]`)
                     });
+                    console.log(`Found to replace outside EC scope: ${method.name}, ${result}`);
                     needsPatch = true;
                 }
 
@@ -379,7 +382,7 @@ class BatteryPatcher {
         for(let string of result) {
             let array = string.replace(")", "").replace("=", "").replace("&", "").trim().split(".");
             let trimmedStr = array[array.length - 1];
-            
+            if (trimmedStr.includes("HWAC")) console.log(array);
             if (this.checkFieldUnitExists(filteredECs, trimmedStr)) {
                 res.push(string);
             }

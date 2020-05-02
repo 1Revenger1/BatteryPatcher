@@ -81,7 +81,7 @@ export class SSDT {
             EC_Prints.push(`\tScope (${ec.scope})\n\t{`);
             EC_Prints.push(`\t\tOperationRegion (X${ec.name.substring(1)}, EmbeddedControl, 0x00, 0x0100)`);
 
-            let unmodifiedEC = dsdt.operatingRegions.get(ec.name);
+            let unmodifiedEC = dsdt.operatingRegions.get(ec.scope + "." + ec.name);
             ec.fields.forEach((field, fieldIndex) => {
                 // Find unmodified field to get offsets
                 let unmodifiedField = unmodifiedEC!.fields.filter(unField => {
@@ -191,25 +191,47 @@ export class SSDT {
                 if (res = line.match(/(?<=Acquire \()[0-9a-zA-Z_]{1,4}/g)) {
                     let mut = dsdt.variable.get(res[0]);
                     if (mut!.type != ObjType.MutexObj) console.log("Incorrect Type - Mutex!");
-                    extStr = (`\tExternal (${mut!.scope + "." + mut!.name}, MutexObj)`);
+                    let scopeName = mut!.scope != undefined && mut!.scope != "\\"
+                        ? mut!.scope + "." + mut!.name
+                        : "\\" + mut!.name
+
+                    extStr = (`\tExternal (${scopeName}, MutexObj)`);
                     if (!definedNames.includes(mut!.name)
                      && !ExternalPrints.includes(extStr)) ExternalPrints.push(extStr);
                 }
 
-                if (res = line.match(/(?<!0x)[0-9A-Z_]{2,4}($|(?=\))|(?![^ ]*(\.|\"))( \()?)/g)) {
-                    res.forEach(result => {
+                if (res = line.match(/(\\|\^*)?([0-9A-Z_]{2,4}\.)*([0-9A-Z_]{2,4}($|( [^=|\-&\.<>\[^!]?(\()?|(?=[,\)]))))/g)) {
+                    res.forEach(string => {
+                        string = string.trim();
+                        let split = string.split(".").map(str => str.trim());
+                        let result = split[split.length - 1].replace("\\", "");
+
+                        let unshiftNum = string.lastIndexOf("^") + 1;
+                        string = string.replace(/\^*/g, "");
+
+                        let splitMethodScope = method.scope.split(".");
+                        
+                        while (unshiftNum-- > 1) splitMethodScope.pop();
+                        if (unshiftNum == 0) string = splitMethodScope.pop() + "." + string;
+                        
+                        if(result.match(/^[0-9]+$/g)) return;
+
                         if (definedNames.includes(result)) return;
                         // Don't add modified FieldUnits to externals...
                         // Otherwise we defeat the entire point of this program
                         if (modifiedEntryList.has(result)) return;
                         // Dito for methods in the SSDT
+
                         if (toModify.filter(meth => meth.name == result).length) return;
 
                         if (result.includes(" (")) {
-                            let method = dsdt.methods.get(result.split(" ")[0]);
-                            if (method!.scope == undefined || method!.scope == "\\")
-                                extStr = (`\tExternal (\\${method!.name}, MethodObj)`);
-                            else extStr = (`\tExternal (${method!.scope + "." + method!.name}, MethodObj)`);
+                            let unmodMethod = dsdt.methods.get(string.replace(" (", ""));
+                            if (!unmodMethod) unmodMethod = dsdt.methods.get(`\\${result.replace(" (", "")}`)
+                            if (!unmodMethod) unmodMethod = dsdt.methods.get(`${method.scope}.${result.replace(" (", "")}`)
+
+                            if (unmodMethod!.scope == undefined || unmodMethod!.scope == "\\")
+                                extStr = (`\tExternal (\\${unmodMethod!.name}, MethodObj)`);
+                            else extStr = (`\tExternal (${unmodMethod!.scope + "." + unmodMethod!.name}, MethodObj)`);
                         } else {
                             // Check Field Units first
                             // Then check Thermal Zones
@@ -220,7 +242,10 @@ export class SSDT {
                             let orResult: FieldUnit | undefined;
                             let orScope: string | undefined;
 
+                            let varScope = string.substring(0, string.length - result.length - (string.includes(".") ? 1 : 0));
                             dsdt.operatingRegions.forEach(or => {
+
+                                if (or.scope != varScope && varScope != "") return;
                                 or.fields.forEach(field => field.fieldUnits.forEach(fieldUnit => {
                                     if (fieldUnit.name == result) {
                                         orResult = fieldUnit;
@@ -231,16 +256,17 @@ export class SSDT {
 
                             if (orResult && orScope)
                                 extStr = (`\tExternal (${orScope + (orScope != "\\" ? "." : "") + orResult.name}, FieldUnitObj)`);
-                            else if (dsdt.variable.has(result)) {
-                                let variab = dsdt.variable.get(result);
-                                // console.log(variab);
-                                extStr = (`\tExternal (${(variab!.scope && variab!.scope != "\\" ? variab!.scope + ".": "\\") + variab!.name}, ${
-                                    ObjType[variab!.type].toString()})`);
-                            } else if (line.includes("Notify")) {
-                                if (result == "_SB")
+                            else if (line.includes("Notify") && result == "_SB")
                                     extStr = (`\tExternal (\\_SB, DeviceObj)`);
-                            } else if (!result.match(/^[A-F0-9]+$/g)) {
-                                console.log("Unknown " + result);
+                            else if (!result.match(/^[A-F0-9]+$/g)) {
+                                let variab = dsdt.variable.get(string);
+                                if (!variab) variab = dsdt.variable.get(`\\${string}`);
+                                if (!variab) variab = dsdt.variable.get(`${method.scope}.${result}`)
+
+                                if (variab)
+                                    extStr = (`\tExternal (${(variab!.scope && variab!.scope != "\\" ? variab!.scope + ".": "\\") + variab!.name}, ${
+                                        ObjType[variab!.type].toString()})`);
+                                else console.log("Unknown " + result);
                             }
                         }
 
@@ -367,7 +393,7 @@ export class SSDT {
                     let changeIndex = i % 2 + 1;
                     newName = newName.substring(0, changeIndex) + String.fromCharCode(newName.charCodeAt(changeIndex) + 1) + newName.substring(changeIndex + 1);
                 }
-                
+
                 taken.push(newName + "0");
                 console.log("New name = " + newName);
             
