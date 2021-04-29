@@ -1,5 +1,7 @@
 # BatteryPatcher
 
+## Archived in favor of [my new Lilu plugin](https://github.com/1Revenger1/ECEnabler)
+
 Aims to dump DSDT and crawl through it for EC fields greater than 8 bits and create an SSDT for them.
 This requires acpidump and iasl - make sure these are in your executables folder
 
